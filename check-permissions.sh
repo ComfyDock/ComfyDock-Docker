@@ -160,6 +160,19 @@ check_directory() {
     rm -f "$temp_dirs"
 }
 
+# Define all ComfyUI directories we want to check
+COMFY_DIRS=(
+    "/app/ComfyUI/custom_nodes"
+    "/app/ComfyUI/web/extensions"
+    "/app/ComfyUI/models"
+    "/app/ComfyUI/input"
+    "/app/ComfyUI/output"
+    "/app/ComfyUI/user"
+)
+
+# Track which directories we've already checked
+declare -A CHECKED_DIRS
+
 # Main execution
 echo "Detecting bind-mounted volumes..."
 BIND_MOUNTS=$(detect_bind_mounts | sort -u)
@@ -170,29 +183,49 @@ else
     echo "Found bind mounts:"
     echo "$BIND_MOUNTS"
     echo ""
-    echo "Checking permissions..."
+    echo "Checking permissions on bind-mounted volumes..."
     
-    # Check each bind mount
+    # Check each bind mount and mark as checked
     while IFS= read -r mount; do
         if [ -d "$mount" ]; then
             echo "Checking: $mount"
             check_directory "$mount"
+            # Mark this directory and any parent/child relationships as checked
+            CHECKED_DIRS["$mount"]=1
         fi
     done <<< "$BIND_MOUNTS"
 fi
 
-# Also check common ComfyUI directories that might be bind-mounted  
+# Check remaining ComfyUI directories that weren't already checked as bind mounts
 echo ""
-echo "Checking custom nodes and extensions directories..."
-COMFY_DIRS=(
-    "/app/ComfyUI/custom_nodes"
-    "/app/ComfyUI/web/extensions"
-)
-
+echo "Checking ComfyUI directories..."
 for dir in "${COMFY_DIRS[@]}"; do
     if [ -d "$dir" ]; then
-        echo "Checking: $dir"
-        check_directory "$dir"
+        # Check if this directory was already processed as a bind mount
+        already_checked=false
+        
+        # Check if this exact directory was already checked
+        if [[ -n "${CHECKED_DIRS[$dir]:-}" ]]; then
+            already_checked=true
+        else
+            # Check if this directory is a subdirectory of any checked bind mount
+            for checked_dir in "${!CHECKED_DIRS[@]}"; do
+                if [[ "$dir" == "$checked_dir"/* ]]; then
+                    already_checked=true
+                    break
+                fi
+            done
+        fi
+        
+        if [ "$already_checked" = false ]; then
+            echo "Checking: $dir"
+            check_directory "$dir"
+            CHECKED_DIRS["$dir"]=1
+        else
+            echo "Skipping $dir (already checked as bind mount)"
+        fi
+    else
+        echo "Directory not found: $dir"
     fi
 done
 
